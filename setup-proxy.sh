@@ -1,3 +1,103 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+MODE="${MODE:-both}"
+PROXY_USER="${PROXY_USER:-proxyuser}"
+PROXY_PASS="${PROXY_PASS:-proxyuser}"
+HTTP_PORT="${HTTP_PORT:-3128}"
+SOCKS_PORT="${SOCKS_PORT:-1080}"
+ALLOW_IP="${ALLOW_IP:-}"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  sudo bash setup-proxy.sh [options]
+
+Options:
+  --mode both|http|socks5     Proxy type to enable. Default: both
+  --user USER                 Proxy username. Default: proxyuser
+  --pass PASS                 Proxy password. Default: proxyuser
+  --http-port PORT            HTTP proxy port. Default: 3128
+  --socks-port PORT           SOCKS5 proxy port. Default: 1080
+  --allow-ip IP_OR_CIDR       Optional client IP/CIDR allowlist
+  --uninstall                 Remove 3proxy service and config
+  -h, --help                  Show help
+
+Examples:
+  sudo bash setup-proxy.sh
+  sudo bash setup-proxy.sh --mode socks5 --user myuser --pass 'MyPass123' --socks-port 1080
+  sudo MODE=http PROXY_USER=myuser PROXY_PASS='MyPass123' bash setup-proxy.sh
+USAGE
+}
+
+log() {
+  printf '\033[1;32m[proxy]\033[0m %s\n' "$*"
+}
+
+die() {
+  printf '\033[1;31m[error]\033[0m %s\n' "$*" >&2
+  exit 1
+}
+
+is_root() {
+  [ "$(id -u)" -eq 0 ]
+}
+
+valid_port() {
+  local port="$1"
+  [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ]
+}
+
+valid_token() {
+  [[ "$1" =~ ^[A-Za-z0-9_.@-]+$ ]]
+}
+
+uninstall_proxy() {
+  is_root || die "Please run as root: sudo bash setup-proxy.sh --uninstall"
+  systemctl disable --now 3proxy >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/3proxy.service
+  rm -rf /etc/3proxy
+  systemctl daemon-reload
+  log "Removed 3proxy service and config."
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --mode)
+      MODE="${2:-}"
+      shift 2
+      ;;
+    --user)
+      PROXY_USER="${2:-}"
+      shift 2
+      ;;
+    --pass)
+      PROXY_PASS="${2:-}"
+      shift 2
+      ;;
+    --http-port)
+      HTTP_PORT="${2:-}"
+      shift 2
+      ;;
+    --socks-port)
+      SOCKS_PORT="${2:-}"
+      shift 2
+      ;;
+    --allow-ip)
+      ALLOW_IP="${2:-}"
+      shift 2
+      ;;
+    --uninstall)
+      uninstall_proxy
+      exit 0
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "Unknown option: $1"
+      ;;
   esac
 done
 
