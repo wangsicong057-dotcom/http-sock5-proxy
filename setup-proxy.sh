@@ -52,6 +52,36 @@ valid_token() {
   [[ "$1" =~ ^[A-Za-z0-9_.@-]+$ ]]
 }
 
+require_value() {
+  local option="$1"
+  local value="${2-}"
+
+  if [ -z "$value" ] || [[ "$value" == --* ]]; then
+    die "$option requires a value."
+  fi
+
+  printf '%s\n' "$value"
+}
+
+valid_allow_ip() {
+  local value="$1"
+  local ip prefix octet
+  local -a octets
+
+  [[ "$value" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?$ ]] || return 1
+
+  ip="${value%/*}"
+  if [[ "$value" == */* ]]; then
+    prefix="${value#*/}"
+    [[ "$prefix" =~ ^[0-9]+$ ]] && [ "$prefix" -ge 0 ] && [ "$prefix" -le 32 ] || return 1
+  fi
+
+  IFS=. read -r -a octets <<< "$ip"
+  for octet in "${octets[@]}"; do
+    [[ "$octet" =~ ^[0-9]+$ ]] && [ "$octet" -ge 0 ] && [ "$octet" -le 255 ] || return 1
+  done
+}
+
 uninstall_proxy() {
   is_root || die "Please run as root: sudo bash setup-proxy.sh --uninstall"
   systemctl disable --now 3proxy >/dev/null 2>&1 || true
@@ -64,27 +94,27 @@ uninstall_proxy() {
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --mode)
-      MODE="${2:-}"
+      MODE="$(require_value "$1" "${2-}")"
       shift 2
       ;;
     --user)
-      PROXY_USER="${2:-}"
+      PROXY_USER="$(require_value "$1" "${2-}")"
       shift 2
       ;;
     --pass)
-      PROXY_PASS="${2:-}"
+      PROXY_PASS="$(require_value "$1" "${2-}")"
       shift 2
       ;;
     --http-port)
-      HTTP_PORT="${2:-}"
+      HTTP_PORT="$(require_value "$1" "${2-}")"
       shift 2
       ;;
     --socks-port)
-      SOCKS_PORT="${2:-}"
+      SOCKS_PORT="$(require_value "$1" "${2-}")"
       shift 2
       ;;
     --allow-ip)
-      ALLOW_IP="${2:-}"
+      ALLOW_IP="$(require_value "$1" "${2-}")"
       shift 2
       ;;
     --uninstall)
@@ -109,12 +139,22 @@ case "$MODE" in
 esac
 
 valid_token "$PROXY_USER" || die "Username may only contain letters, numbers, dot, underscore, @, and hyphen."
+valid_token "$PROXY_PASS" || die "Password may only contain letters, numbers, dot, underscore, @, and hyphen."
 
-valid_port "$HTTP_PORT" || die "Invalid HTTP port: $HTTP_PORT"
-valid_port "$SOCKS_PORT" || die "Invalid SOCKS5 port: $SOCKS_PORT"
+if [ "$MODE" = "both" ] || [ "$MODE" = "http" ]; then
+  valid_port "$HTTP_PORT" || die "Invalid HTTP port: $HTTP_PORT"
+fi
+
+if [ "$MODE" = "both" ] || [ "$MODE" = "socks5" ]; then
+  valid_port "$SOCKS_PORT" || die "Invalid SOCKS5 port: $SOCKS_PORT"
+fi
 
 if [ "$MODE" = "both" ] && [ "$HTTP_PORT" = "$SOCKS_PORT" ]; then
   die "HTTP and SOCKS5 ports must be different when --mode both is used."
+fi
+
+if [ -n "$ALLOW_IP" ]; then
+  valid_allow_ip "$ALLOW_IP" || die "--allow-ip must be an IPv4 address or CIDR, for example: 1.2.3.4 or 1.2.3.0/24"
 fi
 
 if ! command -v apt-get >/dev/null 2>&1; then
@@ -123,13 +163,11 @@ fi
 
 export DEBIAN_FRONTEND=noninteractive
 log "Installing dependencies..."
-apt-get update -y
+apt-get update
 apt-get install -y curl ca-certificates openssl
 
-valid_token "$PROXY_PASS" || die "Password may only contain letters, numbers, dot, underscore, @, and hyphen."
-
 install_3proxy_from_release() {
-  local version arch asset tmpdeb url
+  local version arch asset tmpfile tmpdeb url
   version="0.9.6"
   arch="$(dpkg --print-architecture 2>/dev/null || uname -m)"
 
@@ -148,10 +186,15 @@ install_3proxy_from_release() {
       ;;
   esac
 
-  tmpdeb="$(mktemp)"
+  tmpfile="$(mktemp)"
+  tmpdeb="${tmpfile}.deb"
+  mv "$tmpfile" "$tmpdeb"
   url="https://github.com/3proxy/3proxy/releases/download/${version}/${asset}"
   log "Downloading ${asset}..."
-  curl -fL --retry 3 -o "$tmpdeb" "$url"
+  if ! curl -fL --retry 3 -o "$tmpdeb" "$url"; then
+    rm -f "$tmpdeb"
+    die "Failed to download 3proxy release package: $url"
+  fi
 
   if ! apt-get install -y "$tmpdeb"; then
     dpkg -i "$tmpdeb" || true
@@ -248,7 +291,7 @@ if [ -z "$PUBLIC_IP" ]; then
   PUBLIC_IP="<your-server-ip>"
 fi
 
-if ! systemctl --no-pager --full status 3proxy >/dev/null; then
+if ! systemctl is-active --quiet 3proxy; then
   journalctl -u 3proxy --no-pager -n 50
   die "3proxy failed to start."
 fi
