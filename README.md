@@ -9,7 +9,7 @@ Use it only on servers you own or are authorized to manage, and only for lawful 
 Run this on your Debian/Ubuntu VPS:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/wangsicong057-dotcom/http-sock5-proxy/main/setup-proxy.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/wangsicong057-dotcom/http-sock5-proxy/main/setup-proxy.sh) --mode both)
 ```
 
 Default result:
